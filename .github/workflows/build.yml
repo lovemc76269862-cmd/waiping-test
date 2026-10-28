@@ -16,10 +16,18 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
+      - name: 下载中文语音模型
+        run: |
+          curl -L --retry 3 -o model.zip https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip
+          unzip -q model.zip
+          mkdir -p src/main/assets
+          rm -rf src/main/assets/model-cn
+          mv vosk-model-small-cn-0.22 src/main/assets/model-cn
+          echo "cn-0.22-v1" > src/main/assets/model-cn/uuid
       - run: gradle assembleDebug --no-daemon --stacktrace
-      - run: mv build/outputs/apk/debug/*.apk waiping-test.apk
+      - run: mv build/outputs/apk/debug/*.apk tici.apk
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
-          name: 外屏测试 v${{ github.run_number }}
-          files: waiping-test.apk
+          name: 悬浮提词器 v${{ github.run_number }}
+          files: tici.apk
