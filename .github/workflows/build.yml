@@ -24,6 +24,8 @@ jobs:
           rm -rf src/main/assets/model-cn
           mv vosk-model-small-cn-0.22 src/main/assets/model-cn
           echo "cn-0.22-v1" > src/main/assets/model-cn/uuid
+      - name: 准备固定签名
+        run: base64 -d keystore.b64 > debug.keystore
       - run: gradle assembleDebug --no-daemon --stacktrace
       - run: mv build/outputs/apk/debug/*.apk tici.apk
       - uses: softprops/action-gh-release@v2
