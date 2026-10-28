@@ -28,6 +28,7 @@ object Prefs {
 class MainActivity : Activity() {
     private lateinit var edit: EditText
     private lateinit var tip: TextView
+    private lateinit var a11yBtn: Button
     private var waitingOverlay = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,6 +65,14 @@ class MainActivity : Activity() {
             textSize = 20f
             setOnClickListener { start() }
         })
+        a11yBtn = Button(this).apply {
+            textSize = 16f
+            setOnClickListener {
+                Toast.makeText(this@MainActivity, "请找到“悬浮提词器（录像时跟读）”，把它打开", Toast.LENGTH_LONG).show()
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+        }
+        root.addView(a11yBtn)
         root.addView(Button(this).apply {
             text = "关闭悬浮窗"
             setOnClickListener { stopService(Intent(this@MainActivity, OverlayService::class.java)) }
@@ -71,8 +80,14 @@ class MainActivity : Activity() {
         setContentView(root)
     }
 
+    private fun a11yOn(): Boolean {
+        val list = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
+        return list.contains("$packageName/")
+    }
+
     override fun onResume() {
         super.onResume()
+        a11yBtn.text = if (a11yOn()) "✅ 录像时跟读：已开启" else "⚠ 录像时跟读：点这里开启（无障碍）"
         if (waitingOverlay && Settings.canDrawOverlays(this)) {
             waitingOverlay = false
             start()
