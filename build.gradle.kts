@@ -19,6 +19,17 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    signingConfigs {
+        getByName("debug") {
+            enableV1Signing = true
+            enableV2Signing = true
+        }
+    }
+    packaging {
+        resources {
+            excludes += listOf("META-INF/AL2.0", "META-INF/LGPL2.1")
+        }
+    }
 }
 
 dependencies {
