@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="a11y_desc">打开后，相机录像时悬浮提词器也能听到你的声音，AI 跟读才能正常工作。它不会读取屏幕内容。</string>
+</resources>
