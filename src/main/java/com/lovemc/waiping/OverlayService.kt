@@ -61,6 +61,7 @@ class OverlayService : Service(), RecognitionListener {
     private var lastFrame = 0L
     private var lastY = 0f
     private var heard = false
+    private var touchUntil = 0L
 
     private var model: Model? = null
     private var speech: SpeechService? = null
@@ -198,11 +199,20 @@ class OverlayService : Service(), RecognitionListener {
         bar.addView(btn("A+") { changeFont(2f) })
         bar.addView(btn("⤒ 开头") { toTop() })
         bar.addView(btn("📷 相机") { openCamera(this) })
-        bar.addView(btn("✕ 关闭") { stopSelf() })
-        root.addView(HorizontalScrollView(this).apply {
+        val top = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        top.addView(HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             addView(bar)
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        top.addView(btn("✕") { stopSelf() }.apply {
+            textSize = 20f
+            setPadding(dp(16f), dp(4f), dp(16f), dp(4f))
+            setBackgroundColor(Color.argb(230, 200, 40, 40))
         })
+        root.addView(top)
 
         status = TextView(this).apply {
             textSize = 12f
@@ -221,6 +231,18 @@ class OverlayService : Service(), RecognitionListener {
         scroll = ScrollView(this).apply {
             isVerticalScrollBarEnabled = false
             addView(txt)
+        }
+        scroll.setOnTouchListener { _, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE ->
+                    touchUntil = System.currentTimeMillis() + 800
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    touchUntil = System.currentTimeMillis() + 1500
+            }
+            false
+        }
+        scroll.setOnScrollChangeListener { _, _, _, _, _ ->
+            if (followMode && System.currentTimeMillis() < touchUntil) posFromScroll()
         }
         root.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
@@ -284,6 +306,25 @@ class OverlayService : Service(), RecognitionListener {
         val line = layout.getLineForOffset(idx)
         val y = layout.getLineTop(line) + txt.paddingTop - (scroll.height * 0.25f).toInt()
         scroll.smoothScrollTo(0, y.coerceAtLeast(0))
+    }
+
+    // 用户手动拖动后，按“阅读线”（窗口上方四分之一处）重新定位跟读位置
+    private fun posFromScroll() {
+        val layout = txt.layout ?: return
+        if (map.isEmpty()) return
+        val yLine = scroll.scrollY + (scroll.height * 0.25f).toInt() - txt.paddingTop
+        val line = layout.getLineForVertical(yLine.coerceAtLeast(0))
+        val offset = layout.getLineStart(line)
+        var lo = 0
+        var hi = map.size
+        while (lo < hi) {
+            val mid = (lo + hi) / 2
+            if (map[mid] < offset) lo = mid + 1 else hi = mid
+        }
+        if (lo != pos) {
+            pos = lo
+            render()
+        }
     }
 
     private fun updateButtons() {
@@ -352,14 +393,19 @@ class OverlayService : Service(), RecognitionListener {
 
     // ---------- AI 跟读 ----------
     private fun follow(heardText: String) {
+        if (System.currentTimeMillis() < touchUntil) return
         val h = heardText.filter { Character.isLetterOrDigit(it) }.lowercase()
         if (h.length < 2) return
         val from = (pos - 10).coerceAtLeast(0)
-        val to = (pos + 120).coerceAtMost(clean.length)
-        if (from >= to) return
-        val window = clean.substring(from, to)
-        for (n in minOf(6, h.length) downTo 2) {
-            val i = window.indexOf(h.takeLast(n))
+        for (n in minOf(8, h.length) downTo 2) {
+            val maxAhead = when {
+                n >= 5 -> 60
+                n >= 3 -> 25
+                else -> 8
+            }
+            val to = (pos + maxAhead + n).coerceAtMost(clean.length)
+            if (from >= to) continue
+            val i = clean.substring(from, to).indexOf(h.takeLast(n))
             if (i >= 0) {
                 val np = from + i + n
                 if (np > pos) {
