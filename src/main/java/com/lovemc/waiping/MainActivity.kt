@@ -1,171 +1,129 @@
 package com.lovemc.waiping
 
-import android.app.Presentation
-import android.content.Context
+import android.Manifest
+import android.app.Activity
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
-import android.hardware.display.DisplayManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.Gravity
-import android.view.View
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
-import androidx.activity.ComponentActivity
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
-import androidx.window.area.WindowAreaCapability
-import androidx.window.area.WindowAreaController
-import androidx.window.area.WindowAreaInfo
-import androidx.window.area.WindowAreaPresentationSessionCallback
-import androidx.window.area.WindowAreaSessionPresenter
-import androidx.window.core.ExperimentalWindowApi
-import kotlinx.coroutines.launch
-import java.util.concurrent.Executor
+import android.widget.Toast
 
-@OptIn(ExperimentalWindowApi::class)
-class MainActivity : ComponentActivity(), WindowAreaPresentationSessionCallback {
+object Prefs {
+    const val NAME = "tici"
+    const val SCRIPT = "script"
+    const val SPEED = "speed"
+    const val FONT = "font"
+    const val H = "h"
+    const val Y = "y"
+}
 
-    private lateinit var log: TextView
-    private val controller by lazy { WindowAreaController.getOrCreate() }
-    private var rearInfo: WindowAreaInfo? = null
-    private var session: WindowAreaSessionPresenter? = null
-    private var presentation: Presentation? = null
-    private val uiExecutor = Executor { runOnUiThread(it) }
+class MainActivity : Activity() {
+    private lateinit var edit: EditText
+    private lateinit var tip: TextView
+    private var waitingOverlay = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
+        val prefs = getSharedPreferences(Prefs.NAME, MODE_PRIVATE)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(40, 80, 40, 40)
             setBackgroundColor(Color.BLACK)
         }
         root.addView(TextView(this).apply {
-            text = "外屏测试：请把手机展开后再点按钮"
-            textSize = 20f
+            text = "悬浮提词器"
+            textSize = 24f
             setTextColor(Color.YELLOW)
         })
-        root.addView(button("方法1：系统外屏接口") { tryMethod1() })
-        root.addView(button("方法2：第二块屏幕") { tryMethod2() })
-        root.addView(button("停止显示") { stopAll() })
-        log = TextView(this).apply {
-            textSize = 15f
+        tip = TextView(this).apply {
+            textSize = 14f
+            setTextColor(Color.LTGRAY)
+            text = "把稿子粘贴到下面，点“开始悬浮提词”，会自动打开相机。"
+        }
+        root.addView(tip)
+        edit = EditText(this).apply {
+            setText(prefs.getString(Prefs.SCRIPT, ""))
+            hint = "在这里粘贴你的稿子"
+            setHintTextColor(Color.GRAY)
             setTextColor(Color.WHITE)
+            textSize = 18f
+            gravity = Gravity.TOP
+            setBackgroundColor(Color.rgb(30, 30, 30))
         }
-        root.addView(ScrollView(this).apply { addView(log) },
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(edit, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(Button(this).apply {
+            text = "开始悬浮提词"
+            textSize = 20f
+            setOnClickListener { start() }
+        })
+        root.addView(Button(this).apply {
+            text = "关闭悬浮窗"
+            setOnClickListener { stopService(Intent(this@MainActivity, OverlayService::class.java)) }
+        })
         setContentView(root)
+    }
 
-        addLog("手机：${Build.MANUFACTURER} ${Build.MODEL}，安卓 SDK ${Build.VERSION.SDK_INT}")
-        listDisplays()
-
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                try {
-                    controller.windowAreaInfos.collect { infos ->
-                        rearInfo = infos.firstOrNull { it.type == WindowAreaInfo.Type.TYPE_REAR_FACING }
-                        val st = rearInfo
-                            ?.getCapability(WindowAreaCapability.Operation.OPERATION_PRESENT_ON_AREA)
-                            ?.status
-                        addLog("外屏接口：找到 ${infos.size} 个区域，外屏显示状态 = ${st ?: "不支持"}")
-                    }
-                } catch (e: Throwable) {
-                    addLog("外屏接口读取出错：${e.message}")
-                }
-            }
+    override fun onResume() {
+        super.onResume()
+        if (waitingOverlay && Settings.canDrawOverlays(this)) {
+            waitingOverlay = false
+            start()
         }
     }
 
-    private fun button(label: String, onClick: () -> Unit) = Button(this).apply {
-        text = label
-        textSize = 17f
-        setOnClickListener { onClick() }
+    override fun onPause() {
+        super.onPause()
+        save()
     }
 
-    private fun bigText(ctx: Context, msg: String): View = TextView(ctx).apply {
-        text = msg
-        textSize = 34f
-        gravity = Gravity.CENTER
-        setTextColor(Color.YELLOW)
-        setBackgroundColor(Color.BLACK)
+    private fun save() {
+        getSharedPreferences(Prefs.NAME, MODE_PRIVATE).edit()
+            .putString(Prefs.SCRIPT, edit.text.toString()).apply()
     }
 
-    private fun addLog(msg: String) = runOnUiThread { log.append("• $msg\n\n") }
-
-    private fun listDisplays() {
-        val dm = getSystemService(DisplayManager::class.java)
-        val all = dm.displays
-        addLog("系统里有 ${all.size} 块屏幕：" + all.joinToString("；") { "#${it.displayId} ${it.name}" })
-        val pres = dm.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)
-        addLog("可以投放内容的屏幕：${pres.size} 块")
-    }
-
-    // 方法1：安卓官方的“后屏/外屏显示”接口
-    private fun tryMethod1() {
-        val info = rearInfo
-        if (info == null) {
-            addLog("方法1：系统没有给第三方 APP 开放外屏接口")
+    private fun start() {
+        save()
+        if (!Settings.canDrawOverlays(this)) {
+            tip.text = "请在打开的页面里找到“悬浮提词器”，打开“悬浮窗/显示在其他应用上层”，然后返回。"
+            Toast.makeText(this, "请打开悬浮窗权限", Toast.LENGTH_LONG).show()
+            waitingOverlay = true
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             return
         }
-        try {
-            controller.presentContentOnWindowArea(info.token, this, uiExecutor, this)
-            addLog("方法1：已发出请求，等系统回应…")
-        } catch (e: Throwable) {
-            addLog("方法1 失败：${e.message}")
+        val need = mutableListOf<String>()
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            need += Manifest.permission.RECORD_AUDIO
         }
-    }
-
-    override fun onSessionStarted(session: WindowAreaSessionPresenter) {
-        this.session = session
-        session.setContentView(bigText(session.context, "方法1 成功！\n外屏可以显示提词"))
-        addLog("方法1：成功！看看外屏有没有出现黄字")
-    }
-
-    override fun onSessionEnded(t: Throwable?) {
-        session = null
-        addLog("方法1：已结束" + (t?.let { "，原因：${it.message}" } ?: ""))
-    }
-
-    override fun onContainerVisibilityChanged(isVisible: Boolean) {
-        addLog("方法1：外屏内容可见 = $isVisible")
-    }
-
-    // 方法2：把外屏当成第二块显示器
-    private fun tryMethod2() {
-        listDisplays()
-        val dm = getSystemService(DisplayManager::class.java)
-        @Suppress("DEPRECATION")
-        val mine = windowManager.defaultDisplay.displayId
-        val other = dm.displays.firstOrNull { it.displayId != mine }
-        if (other == null) {
-            addLog("方法2：系统只给了一块屏幕，用不了")
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            need += Manifest.permission.POST_NOTIFICATIONS
+        }
+        if (need.isNotEmpty()) {
+            requestPermissions(need.toTypedArray(), 1)
             return
         }
-        try {
-            presentation?.dismiss()
-            val p = Presentation(this, other)
-            p.setContentView(bigText(p.context, "方法2 成功！\n外屏可以显示提词"))
-            p.show()
-            presentation = p
-            addLog("方法2：已显示到 #${other.displayId} ${other.name}，看看外屏")
-        } catch (e: Throwable) {
-            addLog("方法2 失败：${e.message}")
+        launchOverlay()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            launchOverlay()
+        } else {
+            tip.text = "需要麦克风权限才能用 AI 跟读，请再点一次“开始悬浮提词”，选择允许。"
         }
     }
 
-    private fun stopAll() {
-        try { session?.close() } catch (_: Throwable) {}
-        session = null
-        presentation?.dismiss()
-        presentation = null
-        addLog("已停止")
-    }
-
-    override fun onDestroy() {
-        stopAll()
-        super.onDestroy()
+    private fun launchOverlay() {
+        val i = Intent(this, OverlayService::class.java)
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
     }
 }
